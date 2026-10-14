@@ -1,4 +1,4 @@
-# Bulk PDF Grabber
+# Bulk PDF Downloader
 
 Scan any web page for PDF links, pick the ones you want, and download them
 all in one click — no more clicking "Save As" 15 times in a row.
@@ -21,7 +21,7 @@ all in one click — no more clicking "Save As" 15 times in a row.
 - On Moodle, files are sorted into folders by course section. Past-paper
   sections like "First Year - Semester II Examination - Oct / Nov 2025"
   become `Year 1/Semester 2/2025 Oct-Nov/`
-- Downloads go into a `BulkPDFGrabber/` folder inside your normal Downloads
+- Downloads go into a `BulkPDFDownloader/` folder inside your normal Downloads
   folder, organized into a subfolder per class when scanning Classroom
 - Nothing is uploaded anywhere — everything happens locally in your browser
 
@@ -32,7 +32,7 @@ all in one click — no more clicking "Save As" 15 times in a row.
 **From a downloaded release (manual install):**
 
 1. Download the latest `.zip` from the
-   [Releases page](https://github.com/sandunMadhushan/bulk-pdf-grabber-extension/releases)
+   [Releases page](https://github.com/sandunMadhushan/bulk-pdf-downloader-extension/releases)
    and unzip it.
 2. Open `chrome://extensions` in Chrome.
 3. Turn on **Developer mode** (top right toggle).
@@ -42,11 +42,11 @@ all in one click — no more clicking "Save As" 15 times in a row.
 ## How to use
 
 1. Open a page that has PDF links on it.
-2. Click the Bulk PDF Grabber icon in your toolbar.
+2. Click the Bulk PDF Downloader icon in your toolbar.
 3. Review the list of PDFs it found — everything is selected by default.
 4. Uncheck anything you don't want, or use the filter box to narrow the list.
 5. Click **Download selected**.
-6. Files will appear in `Downloads/BulkPDFGrabber/` — as individual files,
+6. Files will appear in `Downloads/BulkPDFDownloader/` — as individual files,
    or (on a regular page, not Classroom) as a single `.zip` if you selected
    10 or more.
 

@@ -1,6 +1,6 @@
 importScripts("zip.js");
 
-const SUBFOLDER = "BulkPDFGrabber";
+const SUBFOLDER = "BulkPDFDownloader";
 const DELAY_MS = 350; // stagger between downloads so Chrome doesn't throttle/flag them
 const DOWNLOAD_TIMEOUT_MS = 25000; // safety net if onChanged never fires
 
@@ -8,7 +8,7 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Sub-path a file goes under, inside BulkPDFGrabber/ or inside the zip:
+// Sub-path a file goes under, inside BulkPDFDownloader/ or inside the zip:
 // the Moodle section folders ("Year 1/Semester 2/2025 Oct-Nov") worked out
 // by popup.js, or the class name for Classroom items.
 function folderPrefix(file) {
@@ -191,7 +191,7 @@ async function fetchFileBase64InTab(tabId, file) {
       if (result && result.ok) return { ok: true, base64: result.base64 };
       lastReason = (result && result.reason) || "inject-failed";
     } catch (e) {
-      console.warn("Bulk PDF Grabber: in-page fetch failed for", url, e);
+      console.warn("Bulk PDF Downloader: in-page fetch failed for", url, e);
       lastReason = "inject-failed";
     }
   }
@@ -266,7 +266,7 @@ async function ensureOffscreenDocument() {
 const ZIP_TRANSFER_CHUNK_CHARS = 4 * 1024 * 1024;
 
 function connectOffscreenZip() {
-  const port = chrome.runtime.connect({ name: "bulk-pdf-grabber-zip" });
+  const port = chrome.runtime.connect({ name: "bulk-pdf-downloader-zip" });
   const waiting = new Map();
   let nextId = 1;
   let disconnected = false;
@@ -359,7 +359,7 @@ async function openOffscreenZip() {
     await zip.ping();
     return zip;
   } catch (e) {
-    console.warn("Bulk PDF Grabber: offscreen document unavailable, falling back to split data: URLs", e);
+    console.warn("Bulk PDF Downloader: offscreen document unavailable, falling back to split data: URLs", e);
     return null;
   }
 }
@@ -443,7 +443,7 @@ function sanitizeZipBase(name) {
     .trim()
     .replace(/[. ]+$/, "")
     .slice(0, 120);
-  return clean || `BulkPDFGrabber-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  return clean || `BulkPDFDownloader-${new Date().toISOString().replace(/[:.]/g, "-")}`;
 }
 
 async function downloadAsZip(files, tabId, zipName) {
@@ -473,7 +473,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const files = message.files || [];
   const run = message.asZip ? downloadAsZip(files, message.tabId, message.zipName) : downloadIndividually(files);
   run.catch((e) => {
-    console.error("Bulk PDF Grabber: download run crashed", e);
+    console.error("Bulk PDF Downloader: download run crashed", e);
     chrome.runtime
       .sendMessage({
         type: "DOWNLOAD_COMPLETE",

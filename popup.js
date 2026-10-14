@@ -432,13 +432,13 @@ async function boot() {
 
   if (hostname === "classroom.google.com") {
     mode = "classroom";
-    titleEl.textContent = "Bulk PDF Grabber — Classroom";
+    titleEl.textContent = "Bulk PDF Downloader — Classroom";
     typeChipsEl.classList.remove("hidden");
     deepScanBtn.classList.remove("hidden");
     await scanClassroom(tab, false);
   } else {
     mode = "generic";
-    titleEl.textContent = "Bulk PDF Grabber";
+    titleEl.textContent = "Bulk PDF Downloader";
     typeChipsEl.classList.add("hidden");
     deepScanBtn.classList.add("hidden");
     if (!/^https?:/i.test(tab.url || "")) {

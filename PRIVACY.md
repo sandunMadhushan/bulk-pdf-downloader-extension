@@ -1,12 +1,12 @@
-# Privacy Policy for Bulk PDF Grabber
+# Privacy Policy for Bulk PDF Downloader
 
 _Last updated: September 13, 2026_
 
-Bulk PDF Grabber ("the extension") is a browser extension that scans the current web page (or a Google Classroom / Moodle course page) for links to PDF files and lets you select and download the ones you want.
+Bulk PDF Downloader ("the extension") is a browser extension that scans the current web page (or a Google Classroom / Moodle course page) for links to PDF files and lets you select and download the ones you want.
 
 ## Data collection
 
-Bulk PDF Grabber does **not** collect, transmit, sell, or share any personal data, browsing history, or website content with the developer or any third party. The extension does not use analytics, tracking, or remote servers.
+Bulk PDF Downloader does **not** collect, transmit, sell, or share any personal data, browsing history, or website content with the developer or any third party. The extension does not use analytics, tracking, or remote servers.
 
 All processing — scanning the page for PDF links, letting you choose which ones to download, and (optionally) bundling them into a zip file — happens entirely locally in your browser.
 
@@ -31,4 +31,4 @@ If this policy changes, the updated version will be posted at this same URL with
 
 ## Contact
 
-Questions about this policy can be sent to the developer at dilshansoftlab@gmail.com or via [github.com/sandunMadhushan/bulk-pdf-grabber-extension](https://github.com/sandunMadhushan/bulk-pdf-grabber-extension).
+Questions about this policy can be sent to the developer at dilshansoftlab@gmail.com or via [github.com/sandunMadhushan/bulk-pdf-downloader-extension](https://github.com/sandunMadhushan/bulk-pdf-downloader-extension).

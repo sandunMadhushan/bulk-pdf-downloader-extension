@@ -13,7 +13,7 @@ public-facing README.
   elements, and keeps anything whose URL ends in `.pdf`.
 - **background.js** (a service worker) receives the selected list and calls
   `chrome.downloads.download()` for each one, spaced ~350ms apart, saving
-  everything into a `BulkPDFGrabber/` subfolder in your Downloads folder.
+  everything into a `BulkPDFDownloader/` subfolder in your Downloads folder.
 
 ## v2: Classroom/Drive detection — validated against a live page
 
@@ -50,7 +50,7 @@ connected browser session. What that confirmed, and what's still inferred:
   e.g. `"Attachment: Google Docs: ..."`, based on Google's general
   accessibility conventions, but I only had PDF attachments to check against
   in this account). If detection misses Docs/Slides/Sheets specifically,
-  run `window.__pdfGrabberDebug()` on a post that has one and check the
+  run `window.__pdfDownloaderDebug()` on a post that has one and check the
   actual `aria-label` string, then adjust the regex in `typeFromLabel`.
 - The Classwork tab specifically — the class I checked had no assignments
   posted yet, so attachment detection there is untested (Stream attachments
@@ -139,7 +139,7 @@ connected browser session. What that confirmed, and what's still inferred:
 ## v2.3.0: zip-bundling for 10+ files
 
 - Selecting 10+ files and clicking Download now bundles them into a single
-  `.zip` (`BulkPDFGrabber/BulkPDFGrabber-<timestamp>.zip`) instead of
+  `.zip` (`BulkPDFDownloader/BulkPDFDownloader-<timestamp>.zip`) instead of
   triggering N separate downloads. Below that threshold, behavior is
   unchanged (N individual downloads via `chrome.downloads.download`, as
   before).
@@ -236,8 +236,8 @@ connected browser session. What that confirmed, and what's still inferred:
   uncompressed file data each — comfortably under the string-length limit
   even after base64 inflates it by ~33%), and `downloadZipPart()` builds
   and downloads each group as its own `.zip`, sequentially. Below the cap
-  (the common case), this is unchanged — one file: `BulkPDFGrabber-
-  <timestamp>.zip`. Above it: `BulkPDFGrabber-<timestamp>-part1of3.zip`,
+  (the common case), this is unchanged — one file: `BulkPDFDownloader-
+  <timestamp>.zip`. Above it: `BulkPDFDownloader-<timestamp>-part1of3.zip`,
   `-part2of3.zip`, etc. Verified the grouping logic in Node against a
   simulated 523-file batch with realistic (1-10MB) file sizes — produced
   22 parts, each landing at or just under the 60MB cap.
@@ -325,8 +325,8 @@ connected browser session. What that confirmed, and what's still inferred:
   names -- every one parsed as intended. Names that don't look like an exam
   sitting fall back to one folder named after the section.
 - The zip is named after the course heading
-  (`BulkPDFGrabber/E-Library - Department of Computing.zip`). Individual
-  (<10 file) downloads use the same folder layout under `BulkPDFGrabber/`.
+  (`BulkPDFDownloader/E-Library - Department of Computing.zip`). Individual
+  (<10 file) downloads use the same folder layout under `BulkPDFDownloader/`.
 - **Section title links were being detected as PDFs.** The live page showed
   523 "PDFs" for 466 real files: each section's title link walks up to the
   whole section, which contains PDF icons, so `hasPdfIcon()` matched. Those
@@ -358,12 +358,12 @@ connected browser session. What that confirmed, and what's still inferred:
 
 1. **Icons**: already included at 16/48/128px in `icons/` (simple placeholder
    design — swap in your own branding before publishing).
-2. **Zip it**: from inside the `pdf-grabber/` folder, zip the *contents*
+2. **Zip it**: from inside the `pdf-downloader/` folder, zip the *contents*
    (not the folder itself) — the zip's root must contain `manifest.json`
    directly:
    ```
-   cd pdf-grabber
-   zip -r ../pdf-grabber.zip . -x ".git/*"
+   cd pdf-downloader
+   zip -r ../pdf-downloader.zip . -x ".git/*"
    ```
 3. **Developer account**: go to the
    [Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole),
@@ -396,4 +396,15 @@ connected browser session. What that confirmed, and what's still inferred:
       (indeterminate) state.
 - [ ] Test on `chrome://` or `file://` pages (should show the "can't be
       scanned" message instead of erroring).
-- [ ] Confirm downloaded files land in `Downloads/BulkPDFGrabber/`.
+- [ ] Confirm downloaded files land in `Downloads/BulkPDFDownloader/`.
+
+## v2.5.1: renamed to Bulk PDF Downloader
+
+- Renamed from "Bulk PDF Grabber" because Chrome Web Store users search for
+  "PDF downloader". Everything was renamed: the manifest name, GitHub repo
+  (`bulk-pdf-downloader-extension`; GitHub redirects the old URL), the
+  `Downloads/BulkPDFDownloader/` output folder, the `__pdfDownloaderDebug`
+  console helper and the internal port name. Older notes above still use the
+  old names where they describe past versions.
+- Users who already have files in `Downloads/BulkPDFGrabber/` keep them
+  there; new downloads go to the new folder.

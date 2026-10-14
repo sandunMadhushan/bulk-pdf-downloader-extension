@@ -11,12 +11,12 @@
 //     stable because screen readers depend on them
 //   - role="heading" / aria-level / <h1-6> — same reasoning
 // If detection misses things on your real Classroom pages, run
-// `window.__pdfGrabberDebug()` in the page console (see bottom of file) to
+// `window.__pdfDownloaderDebug()` in the page console (see bottom of file) to
 // see exactly what the scanner is seeing, then tighten the heuristics below.
 
 (() => {
-  if (window.__pdfGrabberClassroomInstalled) return;
-  window.__pdfGrabberClassroomInstalled = true;
+  if (window.__pdfDownloaderClassroomInstalled) return;
+  window.__pdfDownloaderClassroomInstalled = true;
 
   const FILE_REF_PATTERNS = [
     { re: /\/file\/d\/([a-zA-Z0-9_-]+)/, kind: "drive" },
@@ -239,11 +239,11 @@
     }
   });
 
-  // Debug helper — run window.__pdfGrabberDebug() in the Classroom page's
+  // Debug helper — run window.__pdfDownloaderDebug() in the Classroom page's
   // console (F12) to see exactly what the scanner currently sees, and why.
-  window.__pdfGrabberDebug = () => {
+  window.__pdfDownloaderDebug = () => {
     const items = collect();
-    console.log(`[Bulk PDF Grabber] ${items.length} candidate file(s) found:`);
+    console.log(`[Bulk PDF Downloader] ${items.length} candidate file(s) found:`);
     console.table(items);
     return items;
   };

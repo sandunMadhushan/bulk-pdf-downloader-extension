@@ -21,7 +21,7 @@ function base64ToBytes(base64) {
 }
 
 chrome.runtime.onConnect.addListener((port) => {
-  if (port.name !== "bulk-pdf-grabber-zip") return;
+  if (port.name !== "bulk-pdf-downloader-zip") return;
 
   let writer = new ZipWriter();
   let pendingChunks = [];
