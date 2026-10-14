@@ -291,6 +291,53 @@ connected browser session. What that confirmed, and what's still inferred:
   from several small `Uint8Array` chunks reassembles byte-for-byte
   correctly.
 
+## v2.5.0: zip built incrementally, Moodle sections become folders
+
+- **v2.4.1 still ended up in the split fallback** on the real course
+  (`lms.aps.rjt.ac.lk/course/view.php?id=1295`, 466 PDFs, 1GB+): the
+  service worker still held every fetched PDF *and* then a second full copy
+  as the finished zip's ArrayBuffer before chunking it over. The user got
+  ~20 × 60MB `download (N).zip` parts instead of one zip.
+- The zip is now built **in the offscreen document, one file at a time**.
+  `background.js` fetches a file in the tab (unchanged), streams its base64
+  over a dedicated `chrome.runtime.connect` port in 4MB slices, and
+  `offscreen.js` appends it to a `ZipWriter` straight away, wrapping that
+  file in its own Blob so its bytes can be dropped (and paged to disk by
+  the browser). Neither side ever holds the whole archive. A port is used
+  instead of `runtime.sendMessage` so the popup isn't sent the chunks too.
+- The zip writer moved into `zip.js` (shared by the service worker via
+  `importScripts` and the offscreen page via `<script>`), and now writes
+  Zip64 records automatically past 4GB / 65535 entries. Verified in Node
+  (normal and forced-Zip64 archives with nested folders and multi-chunk
+  files) against Python's `zipfile` and Windows' `Expand-Archive`.
+- The blob URL is now only revoked once the download actually completes
+  (tracked in `storage.session` + a top-level `downloads.onChanged`
+  listener), not after a fixed 1s -- a 1GB+ download takes far longer. The
+  offscreen document is closed when nothing is pending.
+- **Folders from Moodle sections.** That course has ~60 flat sections whose
+  names carry the hierarchy in many spellings ("B.Sc in Applied Sciences
+  First Year - Semester II Examination - Oct / Nov 2025", "... Fourth Year
+  - Semester - I Examination - September/October 2019", "Nove / Dece 2023",
+  combined "Semester II ... & Semester I ..." sittings). The scan now reads
+  each link's `li.section[data-sectionname]` (confirmed present on every
+  section), and `foldersForSection()` in `popup.js` turns it into
+  `Year 1/Semester 2/2025 Oct-Nov`. Checked against all 62 live section
+  names -- every one parsed as intended. Names that don't look like an exam
+  sitting fall back to one folder named after the section.
+- The zip is named after the course heading
+  (`BulkPDFGrabber/E-Library - Department of Computing.zip`). Individual
+  (<10 file) downloads use the same folder layout under `BulkPDFGrabber/`.
+- **Section title links were being detected as PDFs.** The live page showed
+  523 "PDFs" for 466 real files: each section's title link walks up to the
+  whole section, which contains PDF icons, so `hasPdfIcon()` matched. Those
+  57 entries downloaded as HTML and showed up as failures. Links inside
+  section headers and the course-index drawer are now skipped for icon
+  detection -- the scan returns exactly the 466 resources.
+- The data: URL fallback (no `chrome.offscreen`) now writes one zip per
+  top-level folder (`<course> - Year 1.zip`), split into `(part N)` only if
+  a single year passes the 60MB cap. Every entry keeps its full path, so
+  extracting all parts together rebuilds the same tree.
+
 ## Possible next features
 
 1. **Smarter filenames**: currently uses the link text, falling back to the

@@ -16,6 +16,11 @@ all in one click — no more clicking "Save As" 15 times in a row.
 - Filter the list by filename, or (on Classroom) by file type
 - **Downloading 10+ files from a regular page (not Classroom) bundles them
   into a single `.zip`** instead of triggering that many separate downloads
+  — one zip even for 400+ file (1GB+) courses, named
+  after the course
+- On Moodle, files are sorted into folders by course section. Past-paper
+  sections like "First Year - Semester II Examination - Oct / Nov 2025"
+  become `Year 1/Semester 2/2025 Oct-Nov/`
 - Downloads go into a `BulkPDFGrabber/` folder inside your normal Downloads
   folder, organized into a subfolder per class when scanning Classroom
 - Nothing is uploaded anywhere — everything happens locally in your browser

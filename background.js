@@ -1,3 +1,5 @@
+importScripts("zip.js");
+
 const SUBFOLDER = "BulkPDFGrabber";
 const DELAY_MS = 350; // stagger between downloads so Chrome doesn't throttle/flag them
 const DOWNLOAD_TIMEOUT_MS = 25000; // safety net if onChanged never fires
@@ -6,117 +8,12 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// ---- Minimal ZIP writer (store method -- no compression, no dependency) --
-// PDFs are already internally compressed, so "store" loses nothing over
-// "deflate" while keeping this dependency-free -- MV3 extensions can't pull
-// in a library from a CDN (no remote code allowed), and bundling something
-// like JSZip just for this is overkill when the ZIP format itself is simple
-// enough to write directly.
-const CRC_TABLE = (() => {
-  const table = new Uint32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    table[n] = c >>> 0;
-  }
-  return table;
-})();
-
-function crc32(bytes) {
-  let crc = 0xffffffff;
-  for (let i = 0; i < bytes.length; i++) {
-    crc = CRC_TABLE[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
-function dosDateTime(date) {
-  const time = ((date.getHours() & 0x1f) << 11) | ((date.getMinutes() & 0x3f) << 5) | ((date.getSeconds() >> 1) & 0x1f);
-  const dateVal =
-    (((date.getFullYear() - 1980) & 0x7f) << 9) | (((date.getMonth() + 1) & 0xf) << 5) | (date.getDate() & 0x1f);
-  return { time, dateVal };
-}
-
-// entries: [{ name: string, data: Uint8Array }]
-function buildZip(entries) {
-  const encoder = new TextEncoder();
-  const localParts = [];
-  const centralParts = [];
-  let offset = 0;
-  const { time, dateVal } = dosDateTime(new Date());
-
-  for (const entry of entries) {
-    const nameBytes = encoder.encode(entry.name);
-    const data = entry.data;
-    const crc = crc32(data);
-    const size = data.length;
-
-    const local = new DataView(new ArrayBuffer(30));
-    local.setUint32(0, 0x04034b50, true);
-    local.setUint16(4, 20, true);
-    local.setUint16(6, 0x0800, true); // UTF-8 filename flag
-    local.setUint16(8, 0, true); // method: store
-    local.setUint16(10, time, true);
-    local.setUint16(12, dateVal, true);
-    local.setUint32(14, crc, true);
-    local.setUint32(18, size, true);
-    local.setUint32(22, size, true);
-    local.setUint16(26, nameBytes.length, true);
-    local.setUint16(28, 0, true);
-    localParts.push(new Uint8Array(local.buffer), nameBytes, data);
-
-    const central = new DataView(new ArrayBuffer(46));
-    central.setUint32(0, 0x02014b50, true);
-    central.setUint16(4, 20, true);
-    central.setUint16(6, 20, true);
-    central.setUint16(8, 0x0800, true);
-    central.setUint16(10, 0, true);
-    central.setUint16(12, time, true);
-    central.setUint16(14, dateVal, true);
-    central.setUint32(16, crc, true);
-    central.setUint32(20, size, true);
-    central.setUint32(24, size, true);
-    central.setUint16(28, nameBytes.length, true);
-    central.setUint16(30, 0, true);
-    central.setUint16(32, 0, true);
-    central.setUint16(34, 0, true);
-    central.setUint16(36, 0, true);
-    central.setUint32(38, 0, true);
-    central.setUint32(42, offset, true);
-    centralParts.push(new Uint8Array(central.buffer), nameBytes);
-
-    offset += 30 + nameBytes.length + size;
-  }
-
-  const centralStart = offset;
-  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
-
-  const eocd = new DataView(new ArrayBuffer(22));
-  eocd.setUint32(0, 0x06054b50, true);
-  eocd.setUint16(8, entries.length, true);
-  eocd.setUint16(10, entries.length, true);
-  eocd.setUint32(12, centralSize, true);
-  eocd.setUint32(16, centralStart, true);
-
-  return new Blob([...localParts, ...centralParts, new Uint8Array(eocd.buffer)], { type: "application/zip" });
-}
-
-function uniqueZipName(used, name) {
-  if (!used.has(name)) {
-    used.add(name);
-    return name;
-  }
-  const dot = name.lastIndexOf(".");
-  const base = dot > 0 ? name.slice(0, dot) : name;
-  const ext = dot > 0 ? name.slice(dot) : "";
-  let n = 2;
-  let candidate = `${base} (${n})${ext}`;
-  while (used.has(candidate)) {
-    n += 1;
-    candidate = `${base} (${n})${ext}`;
-  }
-  used.add(candidate);
-  return candidate;
+// Sub-path a file goes under, inside BulkPDFGrabber/ or inside the zip:
+// the Moodle section folders ("Year 1/Semester 2/2025 Oct-Nov") worked out
+// by popup.js, or the class name for Classroom items.
+function folderPrefix(file) {
+  const folder = file.folder || file.classFolder || "";
+  return folder ? `${folder}/` : "";
 }
 
 // Build the candidate download URL(s) for a file. Generic v1 items already
@@ -201,8 +98,7 @@ function attemptDownload(url, filename) {
 
 async function downloadFile(file) {
   const urls = candidateUrls(file);
-  const folder = file.classFolder ? `${SUBFOLDER}/${file.classFolder}/` : `${SUBFOLDER}/`;
-  const filename = folder + file.filename;
+  const filename = `${SUBFOLDER}/${folderPrefix(file)}${file.filename}`;
 
   let lastReason = "no-candidates";
   for (const url of urls) {
@@ -232,6 +128,7 @@ async function downloadIndividually(files) {
   chrome.runtime.sendMessage({ type: "DOWNLOAD_COMPLETE", done, failed, failures, asZip: false }).catch(() => {});
 }
 
+
 // Bundling requires the actual bytes (not just triggering a save-to-disk).
 // A background-page fetch() to a cross-origin URL turned out to be
 // unreliable -- confirmed on a live test (every single fetch failed with a
@@ -244,7 +141,7 @@ async function downloadIndividually(files) {
 // the page, so this is exactly like the page fetching its own file: no
 // CORS issue, no extra permission prompt, just the activeTab/scripting
 // access the extension already has.
-async function fetchBytesInPage(url) {
+async function fetchBase64InPage(url) {
   try {
     const res = await fetch(url, { credentials: "include" });
     if (!res.ok) return { ok: false, reason: `http-${res.status}` };
@@ -272,59 +169,6 @@ function base64ToBytes(base64) {
   return bytes;
 }
 
-async function fetchFileBytesInTab(tabId, file) {
-  const urls = candidateUrls(file);
-  let lastReason = "no-candidates";
-  for (const url of urls) {
-    try {
-      const [{ result }] = await chrome.scripting.executeScript({
-        target: { tabId },
-        func: fetchBytesInPage,
-        args: [url],
-      });
-      if (result && result.ok) return { ok: true, data: base64ToBytes(result.base64) };
-      lastReason = (result && result.reason) || "inject-failed";
-    } catch (e) {
-      console.warn("Bulk PDF Grabber: in-page fetch failed for", url, e);
-      lastReason = "inject-failed";
-    }
-  }
-  return { ok: false, reason: lastReason };
-}
-
-// Preferred path: hand the zip Blob to an offscreen document (a real DOM
-// context the service worker doesn't have) and let IT call
-// URL.createObjectURL -- a Blob URL never needs to become one giant string,
-// so this has no realistic size ceiling, unlike the base64 data: URL
-// fallback below. See offscreen.js and the v2.4.0 DEVELOPMENT.md note.
-let offscreenDocumentReady = null;
-
-async function ensureOffscreenDocument() {
-  if (await chrome.offscreen.hasDocument()) return;
-  if (!offscreenDocumentReady) {
-    offscreenDocumentReady = chrome.offscreen
-      .createDocument({
-        url: "offscreen.html",
-        reasons: ["BLOBS"],
-        justification: "Create a Blob URL for the generated zip file so chrome.downloads.download can save it.",
-      })
-      .finally(() => {
-        offscreenDocumentReady = null;
-      });
-  }
-  await offscreenDocumentReady;
-}
-
-// Sending the whole zip as raw bytes in one runtime.sendMessage call turned
-// out to hit its own hard wall too -- confirmed live: "Error in invocation
-// of runtime.sendMessage(...): Could not serialize message" for a ~60MB
-// payload. So the bytes are streamed over as a sequence of small base64
-// chunks instead; the offscreen document collects them into an array and
-// only calls `new Blob(chunks)` at the end -- the Blob constructor accepts
-// an array of parts directly, so nothing here ever needs to become one
-// giant string or one giant message.
-const ZIP_TRANSFER_CHUNK_BYTES = 4 * 1024 * 1024; // 4MB raw per message
-
 function bytesToBase64(bytes) {
   let binary = "";
   const CHUNK = 0x8000;
@@ -334,118 +178,311 @@ function bytesToBase64(bytes) {
   return btoa(binary);
 }
 
-async function downloadZipViaOffscreen(entries, filename) {
-  const zipBytes = new Uint8Array(await buildZip(entries).arrayBuffer());
-  await ensureOffscreenDocument();
-
-  const transferId = `zip-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  await chrome.runtime.sendMessage({ type: "OFFSCREEN_ZIP_BEGIN", transferId });
-  for (let i = 0; i < zipBytes.length; i += ZIP_TRANSFER_CHUNK_BYTES) {
-    const slice = zipBytes.subarray(i, i + ZIP_TRANSFER_CHUNK_BYTES);
-    await chrome.runtime.sendMessage({ type: "OFFSCREEN_ZIP_CHUNK", transferId, base64: bytesToBase64(slice) });
+async function fetchFileBase64InTab(tabId, file) {
+  const urls = candidateUrls(file);
+  let lastReason = "no-candidates";
+  for (const url of urls) {
+    try {
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: fetchBase64InPage,
+        args: [url],
+      });
+      if (result && result.ok) return { ok: true, base64: result.base64 };
+      lastReason = (result && result.reason) || "inject-failed";
+    } catch (e) {
+      console.warn("Bulk PDF Grabber: in-page fetch failed for", url, e);
+      lastReason = "inject-failed";
+    }
   }
-  const response = await chrome.runtime.sendMessage({
-    type: "OFFSCREEN_ZIP_FINISH",
-    transferId,
-    mimeType: "application/zip",
-  });
-  if (!response || !response.url) throw new Error("offscreen document did not return a blob URL");
-
-  await new Promise((resolve) => {
-    chrome.downloads.download({ url: response.url, filename, saveAs: false, conflictAction: "uniquify" }, () => resolve());
-  });
-  // Give the download manager a moment to start reading the blob before
-  // revoking it and letting the offscreen document close.
-  await sleep(1000);
-  chrome.runtime.sendMessage({ type: "OFFSCREEN_REVOKE_BLOB_URL", url: response.url }).catch(() => {});
+  return { ok: false, reason: lastReason };
 }
 
-// Fallback for browsers where chrome.offscreen isn't available: a base64
-// data: URL works everywhere chrome.downloads.download runs, but doesn't
-// scale to a large combined zip -- turning the whole thing into one giant
-// JS string blows past the engine's max string length (confirmed live:
-// 523 real PDFs, several hundred MB combined, threw "RangeError: Invalid
-// string length"). So entries are grouped into multiple zip parts, each
-// capped well under that limit, downloaded one at a time.
+function startDownload(url, filename) {
+  return new Promise((resolve, reject) => {
+    chrome.downloads.download({ url, filename, saveAs: false, conflictAction: "uniquify" }, (downloadId) => {
+      if (chrome.runtime.lastError || downloadId === undefined) {
+        reject(new Error(chrome.runtime.lastError?.message || "download-failed"));
+      } else {
+        resolve(downloadId);
+      }
+    });
+  });
+}
+
+function makeZipReporter(total) {
+  const report = { done: 0, failed: 0, failures: [] };
+  report.fileDone = (file, result) => {
+    if (!result.ok) {
+      report.failed += 1;
+      report.failures.push({ filename: file.filename, reason: result.reason, viewUrl: file.viewUrl });
+    }
+    report.done += 1;
+    chrome.runtime
+      .sendMessage({ type: "DOWNLOAD_PROGRESS", done: report.done, total, asZip: true })
+      .catch(() => {});
+  };
+  report.saving = () => {
+    chrome.runtime
+      .sendMessage({ type: "DOWNLOAD_PROGRESS", stage: "saving", done: report.done, total, asZip: true })
+      .catch(() => {});
+  };
+  report.complete = () => {
+    const { done, failed, failures } = report;
+    chrome.runtime.sendMessage({ type: "DOWNLOAD_COMPLETE", done, failed, failures, asZip: true }).catch(() => {});
+  };
+  return report;
+}
+
+// ---- Preferred path: one zip, built incrementally in an offscreen document
+//
+// v2.4.x built the whole zip here in the service worker and only then
+// shipped it to the offscreen document -- on the real 466-file course page
+// that meant 1GB+ of PDFs held in the worker at once, plus a second full
+// copy for the finished zip, which failed and dropped into the split
+// fallback below. Now each file goes to the offscreen document as soon as
+// it's fetched (see offscreen.js), so the worker only ever holds one file.
+let offscreenDocumentReady = null;
+
+async function ensureOffscreenDocument() {
+  if (await chrome.offscreen.hasDocument()) return;
+  if (!offscreenDocumentReady) {
+    offscreenDocumentReady = chrome.offscreen
+      .createDocument({
+        url: "offscreen.html",
+        reasons: ["BLOBS"],
+        justification: "Build the combined zip file as a Blob so chrome.downloads.download can save it.",
+      })
+      .finally(() => {
+        offscreenDocumentReady = null;
+      });
+  }
+  await offscreenDocumentReady;
+}
+
+// Each slice is a multiple of 4 characters, so it's valid base64 on its own
+// and the offscreen side can decode it independently. Keeps every message
+// well under extension messaging's size limit (see the v2.4.1 note).
+const ZIP_TRANSFER_CHUNK_CHARS = 4 * 1024 * 1024;
+
+function connectOffscreenZip() {
+  const port = chrome.runtime.connect({ name: "bulk-pdf-grabber-zip" });
+  const waiting = new Map();
+  let nextId = 1;
+  let disconnected = false;
+
+  port.onMessage.addListener((msg) => {
+    const pending = waiting.get(msg.replyTo);
+    if (!pending) return;
+    waiting.delete(msg.replyTo);
+    if (msg.ok) pending.resolve(msg);
+    else pending.reject(new Error(msg.error || "offscreen zip error"));
+  });
+  port.onDisconnect.addListener(() => {
+    disconnected = true;
+    const err = new Error("offscreen document disconnected");
+    waiting.forEach((pending) => pending.reject(err));
+    waiting.clear();
+  });
+
+  const request = (message) =>
+    new Promise((resolve, reject) => {
+      if (disconnected) {
+        reject(new Error("offscreen document disconnected"));
+        return;
+      }
+      const id = nextId++;
+      waiting.set(id, { resolve, reject });
+      port.postMessage({ ...message, id });
+    });
+
+  return {
+    ping: () => request({ type: "PING" }),
+    async addFile(name, base64) {
+      for (let i = 0; i < base64.length; i += ZIP_TRANSFER_CHUNK_CHARS) {
+        await request({ type: "FILE_CHUNK", base64: base64.slice(i, i + ZIP_TRANSFER_CHUNK_CHARS) });
+      }
+      return request({ type: "FILE_END", name });
+    },
+    finish: () => request({ type: "FINISH" }),
+    close: () => port.disconnect(),
+  };
+}
+
+// The finished zip's blob: URL has to stay alive until the download manager
+// has finished reading it -- for a 1GB+ file that's well past any fixed
+// delay. So the URL is remembered (in storage.session, which survives the
+// service worker being suspended mid-download) and released from a
+// top-level downloads.onChanged listener once the download completes or is
+// interrupted. Closing the offscreen document frees the blob in one go.
+const PENDING_BLOB_KEY = "pendingBlobDownloads";
+let activeZipRuns = 0;
+
+async function closeOffscreenIfIdle() {
+  if (activeZipRuns > 0) return;
+  const stored = (await chrome.storage.session.get(PENDING_BLOB_KEY))[PENDING_BLOB_KEY] || {};
+  if (Object.keys(stored).length > 0) return;
+  if (await chrome.offscreen.hasDocument()) await chrome.offscreen.closeDocument().catch(() => {});
+}
+
+async function releaseBlobDownload(downloadId) {
+  const stored = (await chrome.storage.session.get(PENDING_BLOB_KEY))[PENDING_BLOB_KEY] || {};
+  const url = stored[downloadId];
+  if (!url) return;
+  delete stored[downloadId];
+  await chrome.storage.session.set({ [PENDING_BLOB_KEY]: stored });
+  chrome.runtime.sendMessage({ type: "OFFSCREEN_REVOKE_BLOB_URL", url }).catch(() => {});
+  await closeOffscreenIfIdle();
+}
+
+async function rememberBlobDownload(downloadId, url) {
+  const stored = (await chrome.storage.session.get(PENDING_BLOB_KEY))[PENDING_BLOB_KEY] || {};
+  stored[downloadId] = url;
+  await chrome.storage.session.set({ [PENDING_BLOB_KEY]: stored });
+  // A small zip can finish before the line above lands -- catch that case.
+  const [info] = await chrome.downloads.search({ id: downloadId });
+  if (!info || info.state !== "in_progress") await releaseBlobDownload(downloadId);
+}
+
+chrome.downloads.onChanged.addListener((delta) => {
+  const state = delta.state && delta.state.current;
+  if (state === "complete" || state === "interrupted") releaseBlobDownload(delta.id).catch(() => {});
+});
+
+// Returns a connected zip session, or null if this browser can't do the
+// offscreen route (no chrome.offscreen, or the document won't start).
+async function openOffscreenZip() {
+  if (!chrome.offscreen) return null;
+  try {
+    await ensureOffscreenDocument();
+    const zip = connectOffscreenZip();
+    await zip.ping();
+    return zip;
+  } catch (e) {
+    console.warn("Bulk PDF Grabber: offscreen document unavailable, falling back to split data: URLs", e);
+    return null;
+  }
+}
+
+async function zipViaOffscreen(zip, files, tabId, zipBase, report) {
+  let added = 0;
+  for (const file of files) {
+    const result = await fetchFileBase64InTab(tabId, file);
+    if (result.ok) {
+      await zip.addFile(folderPrefix(file) + file.filename, result.base64);
+      added += 1;
+    }
+    report.fileDone(file, result);
+  }
+  if (added === 0) return;
+
+  report.saving();
+  const { url } = await zip.finish();
+  const downloadId = await startDownload(url, `${SUBFOLDER}/${zipBase}.zip`);
+  await rememberBlobDownload(downloadId, url);
+}
+
+// ---- Fallback: split data: URL zips, one (or more) per category
+//
+// Only used where chrome.offscreen isn't available. A base64 data: URL
+// works everywhere chrome.downloads.download runs, but doesn't scale to a
+// large combined zip -- one giant JS string blows past the engine's max
+// string length (confirmed live: "RangeError: Invalid string length"). So
+// this writes one zip per top-level folder ("<course> - Year 1.zip"),
+// further split into "(part N)" pieces only if one category alone passes
+// the size cap. Every entry keeps its full folder path, so extracting all
+// the parts into one place rebuilds the same tree as the single zip.
 const MAX_ZIP_PART_BYTES = 60 * 1024 * 1024; // ~60MB of file data per zip part
 
-function groupEntriesForZipParts(entries) {
-  const groups = [];
-  let current = [];
-  let currentSize = 0;
-  for (const entry of entries) {
-    if (current.length > 0 && currentSize + entry.data.length > MAX_ZIP_PART_BYTES) {
-      groups.push(current);
-      current = [];
-      currentSize = 0;
-    }
-    current.push(entry);
-    currentSize += entry.data.length;
-  }
-  if (current.length > 0) groups.push(current);
-  return groups;
+function topFolder(file) {
+  return (file.folder || file.classFolder || "").split("/")[0];
 }
 
-async function downloadZipPartViaDataUrl(entries, filename) {
-  const zipBytes = new Uint8Array(await buildZip(entries).arrayBuffer());
-  const zipUrl = `data:application/zip;base64,${bytesToBase64(zipBytes)}`;
-  await new Promise((resolve) => {
-    chrome.downloads.download({ url: zipUrl, filename, saveAs: false, conflictAction: "uniquify" }, () => resolve());
-  });
+async function downloadBlobViaDataUrl(blob, filename) {
+  const zipBytes = new Uint8Array(await blob.arrayBuffer());
+  await startDownload(`data:application/zip;base64,${bytesToBase64(zipBytes)}`, filename);
 }
 
-async function downloadEntriesAsZip(entries, stamp) {
-  const singleFilename = `${SUBFOLDER}/BulkPDFGrabber-${stamp}.zip`;
-  try {
-    await downloadZipViaOffscreen(entries, singleFilename);
-    return;
-  } catch (e) {
-    console.warn("Bulk PDF Grabber: offscreen zip download failed, falling back to split data: URLs", e);
-  }
+async function zipViaDataUrls(files, tabId, zipBase, report) {
+  let writer = new ZipWriter();
+  let category = null;
+  let partNo = 1;
+  let partBytes = 0;
 
-  const parts = groupEntriesForZipParts(entries);
-  for (let i = 0; i < parts.length; i++) {
-    const suffix = parts.length > 1 ? `-part${i + 1}of${parts.length}` : "";
-    await downloadZipPartViaDataUrl(parts[i], `${SUBFOLDER}/BulkPDFGrabber-${stamp}${suffix}.zip`);
-  }
-}
-
-async function downloadAsZip(files, tabId) {
-  let done = 0;
-  let failed = 0;
-  const failures = [];
-  const entries = [];
-  const used = new Set();
+  const flush = async (sameCategoryContinues) => {
+    if (writer.count === 0) return;
+    const label = category ? `${zipBase} - ${category}` : zipBase;
+    const suffix = sameCategoryContinues || partNo > 1 ? ` (part ${partNo})` : "";
+    await downloadBlobViaDataUrl(writer.finish(), `${SUBFOLDER}/${label}${suffix}.zip`);
+    writer = new ZipWriter();
+    partBytes = 0;
+    partNo = sameCategoryContinues ? partNo + 1 : 1;
+  };
 
   for (const file of files) {
-    const result = await fetchFileBytesInTab(tabId, file);
+    const result = await fetchFileBase64InTab(tabId, file);
     if (result.ok) {
-      const folder = file.classFolder ? `${file.classFolder}/` : "";
-      entries.push({ name: uniqueZipName(used, folder + file.filename), data: result.data });
-    } else {
-      failed += 1;
-      failures.push({ filename: file.filename, reason: result.reason, viewUrl: file.viewUrl });
+      const data = base64ToBytes(result.base64);
+      const top = topFolder(file);
+      if (writer.count > 0 && top !== category) await flush(false);
+      else if (writer.count > 0 && partBytes + data.length > MAX_ZIP_PART_BYTES) await flush(true);
+      category = top;
+      writer.add(folderPrefix(file) + file.filename, [data]);
+      partBytes += data.length;
     }
-    done += 1;
-    chrome.runtime.sendMessage({ type: "DOWNLOAD_PROGRESS", done, total: files.length, asZip: true }).catch(() => {});
+    report.fileDone(file, result);
+  }
+  report.saving();
+  await flush(false);
+}
+
+function sanitizeZipBase(name) {
+  const clean = (name || "")
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[. ]+$/, "")
+    .slice(0, 120);
+  return clean || `BulkPDFGrabber-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+}
+
+async function downloadAsZip(files, tabId, zipName) {
+  const zipBase = sanitizeZipBase(zipName);
+  const report = makeZipReporter(files.length);
+  const zip = await openOffscreenZip();
+
+  if (zip) {
+    activeZipRuns += 1;
+    try {
+      await zipViaOffscreen(zip, files, tabId, zipBase, report);
+    } finally {
+      activeZipRuns -= 1;
+      zip.close();
+      closeOffscreenIfIdle().catch(() => {});
+    }
+  } else {
+    await zipViaDataUrls(files, tabId, zipBase, report);
   }
 
-  if (entries.length > 0) {
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    await downloadEntriesAsZip(entries, stamp);
-  }
-
-  chrome.runtime.sendMessage({ type: "DOWNLOAD_COMPLETE", done, failed, failures, asZip: true }).catch(() => {});
+  report.complete();
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type !== "DOWNLOAD_PDFS") return;
 
   const files = message.files || [];
-  (message.asZip ? downloadAsZip(files, message.tabId) : downloadIndividually(files)).catch((e) => {
+  const run = message.asZip ? downloadAsZip(files, message.tabId, message.zipName) : downloadIndividually(files);
+  run.catch((e) => {
     console.error("Bulk PDF Grabber: download run crashed", e);
     chrome.runtime
-      .sendMessage({ type: "DOWNLOAD_COMPLETE", done: 0, failed: files.length, failures: [], asZip: !!message.asZip })
+      .sendMessage({
+        type: "DOWNLOAD_COMPLETE",
+        done: 0,
+        failed: files.length,
+        failures: [],
+        asZip: !!message.asZip,
+        error: String((e && e.message) || e),
+      })
       .catch(() => {});
   });
 

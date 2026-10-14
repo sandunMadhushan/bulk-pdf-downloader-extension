@@ -55,7 +55,50 @@ function scanPageForPdfs() {
     return clone.textContent.replace(/\s+/g, " ").trim();
   }
 
+  // CONFIRMED against a live Moodle 4.x course page (lms.aps.rjt.ac.lk, the
+  // 466-PDF "E-Library - Department of Computing" course): every activity
+  // sits inside `<li class="section" data-sectionname="...">`, and the
+  // attribute holds the clean section title (the visible heading also
+  // carries "Collapse"/"Expand" button text). All enclosing sections are
+  // collected, outermost first, so Moodle 4.5+ nested subsections become
+  // nested folders too.
+  function sectionNames(el) {
+    const names = [];
+    const SECTION = "li.section, [data-sectionname]";
+    for (let node = el.closest(SECTION); node; node = node.parentElement && node.parentElement.closest(SECTION)) {
+      let name = node.getAttribute("data-sectionname");
+      if (!name) {
+        const title = node.querySelector(".sectionname, [data-for='section_title']");
+        if (title) name = cleanLabel(title);
+      }
+      if (name && name.trim()) names.unshift(name.replace(/\s+/g, " ").trim());
+    }
+    return names;
+  }
+
+  // CONFIRMED on the same page: a section's own title link sits in the
+  // section header, and walking up from it reaches the whole section --
+  // which contains the PDF icons of the files inside it. So every section
+  // title was being picked up as a "PDF" (57 bogus entries out of 523,
+  // each of which then failed as an HTML page). Section headers and the
+  // course-index drawer only ever link to sections/activities that also
+  // appear in the main content, so they're skipped for icon detection.
+  const NOT_A_FILE_LINK = ".sectionname, [data-for='section_title'], .course-section-header, .courseindex";
+
   const found = new Map();
+
+  // The same resource can be linked twice (e.g. Moodle's course-index
+  // drawer and the main course content) -- keep whichever copy knows its
+  // section, and the first non-empty label.
+  function addFound(url, label, sections) {
+    const existing = found.get(url);
+    if (!existing) {
+      found.set(url, { url, label, sections });
+      return;
+    }
+    if (!existing.label && label) existing.label = label;
+    if (existing.sections.length === 0 && sections.length > 0) existing.sections = sections;
+  }
 
   document.querySelectorAll("a[href]").forEach((a) => {
     let url;
@@ -66,10 +109,10 @@ function scanPageForPdfs() {
     }
     const label = cleanLabel(a);
     if (isPdfUrl(url)) {
-      found.set(url, label || decodeURIComponent(url.split("/").pop()));
-    } else if (label && hasPdfIcon(a)) {
+      addFound(url, label || decodeURIComponent(url.split("/").pop()), sectionNames(a));
+    } else if (label && !a.closest(NOT_A_FILE_LINK) && hasPdfIcon(a)) {
       // e.g. a Moodle "mod/resource/view.php?id=123" wrapper link
-      found.set(url, label);
+      addFound(url, label, sectionNames(a));
     }
   });
 
@@ -79,14 +122,121 @@ function scanPageForPdfs() {
     try {
       const url = new URL(raw, location.href).href;
       if (isPdfUrl(url) && !found.has(url)) {
-        found.set(url, decodeURIComponent(url.split("/").pop()));
+        addFound(url, decodeURIComponent(url.split("/").pop()), sectionNames(el));
       }
     } catch (e) {
       /* ignore */
     }
   });
 
-  return Array.from(found.entries()).map(([url, label]) => ({ url, label }));
+  // Used to name the combined zip, e.g. "E-Library - Department of Computing.zip".
+  const heading = document.querySelector(".page-header-headings h1, #page-header h1, h1");
+  const title = (heading && heading.textContent.replace(/\s+/g, " ").trim()) || document.title || "";
+
+  return { title, items: Array.from(found.values()) };
+}
+
+// ---- Folder layout from Moodle section names --------------------------------
+// The past-paper course this was built against has ~60 flat sections whose
+// names carry the whole hierarchy, in many inconsistent spellings:
+//   "B.Sc in Applied Sciences First Year - Semester II Examination - Oct / Nov 2025"
+//   "B.Sc. (Four- year) Degree in Applied Sciences Fourth Year - Semester - I Examination - September/October 2019"
+//   "... First Year - Pre Semester Examination - Oct 2024"
+//   "... Second Year Semester - II Examination April/May 2015 & Semester - I Examination October/November 2015"
+// Those become  Year 1/Semester 2/2025 Oct-Nov,  Year 4/Semester 1/2019 Sep-Oct,
+// Year 1/Pre Semester/2024 Oct,  Year 2/Semester 1 & 2/2015 Apr-May & Oct-Nov.
+// A section name that doesn't look like an exam sitting (no study year or
+// semester, or no exam date) is used as a single folder as-is, so ordinary
+// courses ("Week 1", "Topic 3") still get one folder per section.
+const STUDY_YEAR_WORDS = { first: 1, "1st": 1, second: 2, "2nd": 2, third: 3, "3rd": 3, fourth: 4, "4th": 4, fifth: 5, "5th": 5 };
+const MONTH_NAMES = [
+  "january", "february", "march", "april", "may", "june",
+  "july", "august", "september", "october", "november", "december",
+];
+const ROMAN_NUMERALS = { i: 1, ii: 2, iii: 3, iv: 4 };
+
+function parseStudyYear(text) {
+  let m = text.match(/\b(first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th)\s*-?\s*year\b/i);
+  if (m) return STUDY_YEAR_WORDS[m[1].toLowerCase()];
+  m = text.match(/\b(?:year|level)\s*-?\s*([1-5])\b/i);
+  return m ? Number(m[1]) : null;
+}
+
+// 0 = pre-semester, 1..4 = semester number, null = not mentioned.
+function parseSemester(text) {
+  if (/\bpre[\s-]*semester\b/i.test(text)) return 0;
+  let m = text.match(/\bsemester\s*[-:]?\s*(iv|iii|ii|i|[1-4])\b/i);
+  if (m) return ROMAN_NUMERALS[m[1].toLowerCase()] || Number(m[1]);
+  m = text.match(/\b(first|second|1st|2nd)\s+semester\b/i);
+  return m ? STUDY_YEAR_WORDS[m[1].toLowerCase()] : null;
+}
+
+// Month words are matched as prefixes of the full name so the course's
+// abbreviations ("Nove", "Dece", "Sept", "Mar") all count.
+function parseSession(text) {
+  const years = text.match(/\b(?:19|20)\d{2}\b/g);
+  const months = [];
+  for (const word of text.match(/[a-z]+/gi) || []) {
+    if (word.length < 3) continue;
+    const index = MONTH_NAMES.findIndex((month) => month.startsWith(word.toLowerCase()));
+    if (index < 0) continue;
+    const label = MONTH_NAMES[index][0].toUpperCase() + MONTH_NAMES[index].slice(1, 3);
+    if (months[months.length - 1] !== label) months.push(label);
+  }
+  return { year: years ? years[years.length - 1] : null, months };
+}
+
+function semesterLabel(semesters) {
+  if (semesters.length === 1) return semesters[0] === 0 ? "Pre Semester" : `Semester ${semesters[0]}`;
+  const numbered = semesters.filter((s) => s > 0);
+  const parts = [];
+  if (semesters.includes(0)) parts.push("Pre Semester");
+  if (numbered.length) parts.push(`Semester ${numbered.join(" & ")}`);
+  return parts.join(" & ");
+}
+
+function sessionLabel(sessions) {
+  const known = sessions.filter((s) => s.year || s.months.length);
+  if (known.length === 0) return null;
+  const years = [...new Set(known.map((s) => s.year).filter(Boolean))];
+  if (years.length <= 1) {
+    const months = known.map((s) => s.months.join("-")).filter(Boolean).join(" & ");
+    return [years[0], months].filter(Boolean).join(" ");
+  }
+  return known.map((s) => [s.year, s.months.join("-")].filter(Boolean).join(" ")).join(" & ");
+}
+
+function sanitizeFolderName(name) {
+  return name
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[. ]+$/, "")
+    .slice(0, 100);
+}
+
+function foldersForSection(name) {
+  const studyYear = parseStudyYear(name);
+  // Combined sittings ("Semester II ... 2015 & Semester I ... 2015") are
+  // parsed per "&"-separated part so each keeps its own semester and date.
+  const parts = name.split("&").map((part) => ({ semester: parseSemester(part), session: parseSession(part) }));
+  const semesters = [...new Set(parts.map((p) => p.semester).filter((s) => s !== null))].sort((a, b) => a - b);
+  const session = sessionLabel(parts.map((p) => p.session));
+
+  if ((studyYear === null && semesters.length === 0) || !session) return [sanitizeFolderName(name)];
+
+  const folders = [];
+  if (studyYear !== null) folders.push(`Year ${studyYear}`);
+  if (semesters.length) folders.push(semesterLabel(semesters));
+  folders.push(session);
+  return folders.map(sanitizeFolderName);
+}
+
+function folderPathForSections(sections) {
+  return sections
+    .flatMap(foldersForSection)
+    .filter(Boolean)
+    .join("/");
 }
 
 // ---- Shared UI state ----------------------------------------------------
@@ -107,8 +257,9 @@ const failuresList = document.getElementById("failuresList");
 
 let mode = "generic"; // 'generic' | 'classroom'
 let activeTabId = null;
-let items = []; // normalized: { key, filename, type, postTitle, selected, payload }
+let items = []; // normalized: { key, filename, folder, type, postTitle, selected, payload }
 let activeTypeFilter = "all";
+let pageTitle = ""; // names the combined zip
 
 function sanitizeFilename(name) {
   return name.replace(/[\\/:*?"<>|]/g, "_").slice(0, 150);
@@ -131,7 +282,7 @@ function render() {
 
   const visible = items.filter((it) => {
     if (activeTypeFilter !== "all" && it.type !== activeTypeFilter) return false;
-    if (filterText && !it.filename.toLowerCase().includes(filterText)) return false;
+    if (filterText && !`${it.folder}/${it.filename}`.toLowerCase().includes(filterText)) return false;
     return true;
   });
 
@@ -170,8 +321,9 @@ function render() {
     }
 
     const subLine = document.createElement("span");
-    subLine.className = mode === "classroom" ? "pdfPostTitle" : "pdfUrl";
-    subLine.textContent = mode === "classroom" ? item.postTitle || "" : item.payload.url || "";
+    subLine.className = mode === "classroom" || item.folder ? "pdfPostTitle" : "pdfUrl";
+    subLine.textContent =
+      mode === "classroom" ? item.postTitle || "" : item.folder.replace(/\//g, " › ") || item.payload.url || "";
     subLine.title = subLine.textContent;
 
     meta.appendChild(nameRow);
@@ -200,16 +352,19 @@ async function scanGeneric(tab) {
     target: { tabId: tab.id },
     func: scanPageForPdfs,
   });
-  const found = (result && result.result) || [];
-  items = found.map((f, i) => {
+  const scan = (result && result.result) || { title: "", items: [] };
+  pageTitle = scan.title;
+  items = scan.items.map((f, i) => {
     const filename = suggestFilename(f.label, i);
+    const folder = folderPathForSections(f.sections || []);
     return {
       key: f.url,
       filename,
+      folder,
       type: "pdf",
       postTitle: "",
       selected: true,
-      payload: { url: f.url, filename, viewUrl: f.url },
+      payload: { url: f.url, filename, folder, viewUrl: f.url },
     };
   });
 }
@@ -219,6 +374,7 @@ function toClassroomItems(rawItems) {
   return rawItems.map((r) => ({
     key: r.id,
     filename: r.filename,
+    folder: "",
     type: r.type,
     postTitle: r.postTitle,
     selected: r.type !== "unknown", // unknown files unselected by default -- may not be PDFs
@@ -356,19 +512,27 @@ downloadBtn.addEventListener("click", async () => {
   statusEl.textContent = asZip
     ? `Fetching 0 / ${selected.length} for zip…`
     : `Downloading 0 / ${selected.length}…`;
-  chrome.runtime.sendMessage({ type: "DOWNLOAD_PDFS", files: payloads, asZip, tabId: activeTabId }, () => {});
+  chrome.runtime.sendMessage(
+    { type: "DOWNLOAD_PDFS", files: payloads, asZip, tabId: activeTabId, zipName: pageTitle },
+    () => {}
+  );
 });
 
 chrome.runtime.onMessage.addListener((msg, sender) => {
   if (msg.type === "DOWNLOAD_PROGRESS") {
-    statusEl.textContent = msg.asZip
-      ? `Fetching ${msg.done} / ${msg.total} for zip…`
-      : `Downloading ${msg.done} / ${msg.total}…`;
+    statusEl.textContent =
+      msg.stage === "saving"
+        ? "Saving zip…"
+        : msg.asZip
+          ? `Fetching ${msg.done} / ${msg.total} for zip…`
+          : `Downloading ${msg.done} / ${msg.total}…`;
   } else if (msg.type === "DOWNLOAD_COMPLETE") {
     const succeeded = msg.done - msg.failed;
-    statusEl.textContent = msg.asZip
-      ? `Done — ${succeeded} file${succeeded === 1 ? "" : "s"} zipped${msg.failed ? `, ${msg.failed} failed` : ""}.`
-      : `Done — ${succeeded} saved${msg.failed ? `, ${msg.failed} failed` : ""}.`;
+    statusEl.textContent = msg.error
+      ? `Failed: ${msg.error}`
+      : msg.asZip
+        ? `Done — ${succeeded} file${succeeded === 1 ? "" : "s"} zipped${msg.failed ? `, ${msg.failed} failed` : ""}.`
+        : `Done — ${succeeded} saved${msg.failed ? `, ${msg.failed} failed` : ""}.`;
     updateFooterAndSelectAll();
 
     if (msg.failed > 0 && msg.failures && msg.failures.length) {
