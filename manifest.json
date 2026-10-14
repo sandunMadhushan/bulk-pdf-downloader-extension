@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Bulk PDF Downloader",
-  "version": "2.5.1",
-  "description": "Bulk PDF downloader: scan the current page (or Google Classroom / Moodle) for PDF links and download the ones you choose in one click.",
+  "version": "2.5.2",
+  "description": "Bulk PDF downloader: scan a page, Google Classroom or Moodle for PDF links and download the ones you choose in one click.",
   "author": "Sandun Madhushan",
   "homepage_url": "https://github.com/sandunMadhushan/bulk-pdf-downloader-extension",
   "permissions": ["activeTab", "scripting", "downloads", "storage", "offscreen"],
